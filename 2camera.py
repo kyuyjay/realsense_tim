@@ -573,6 +573,7 @@ if __name__ == '__main__':
                         time.sleep(10)
                         break
 
+#last mile
             pipe = CV_Pipe('040322073606')
             pipe.start()
             
