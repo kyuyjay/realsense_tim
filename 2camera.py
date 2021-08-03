@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 import cv2
 import traceback
 import struct
+import apriltag
+import argparse
+from PIL import Image
 
 HOST = '169.254.34.2'
 PORT = 30002
@@ -58,7 +61,7 @@ def command_builder(point, rotvec,euler, a='0.05',v='0.15'):
     command = command_str.encode()
     return command
 
-def command_builder_back(point, a='0.05',v='0.2'): 
+def command_builder_back( a='0.05',v='0.2'): 
     r_x = str( 0 )  
     r_y = str(-0.3)  
     r_z = str(0)	
@@ -67,7 +70,7 @@ def command_builder_back(point, a='0.05',v='0.2'):
     command = command_str.encode()
     return command
 
-def command_builder_adjust(point, adjust_z, adjust_x, a='0.05',v='0.2'): 
+def command_builder_adjust(adjust_z, adjust_x, a='0.05',v='0.2'): 
     r_x = str( adjust_x )  
     r_y = str( 0 )  
     r_z = str( adjust_z )
@@ -107,22 +110,23 @@ def command_builder_forward_2(point, elev, a='0.05',v='0.15'):
 
     return command
 
-def command_builder_forward_3(point, elev, a='0.05',v='0.15'):
-    r_x = str((-point[0] + 0.025)) 
-    r_y = str(0) 
-    r_z = str(point[1] -0.06)
-    elev = str(elev)
+def command_builder_forward_3( a='0.05',v='0.15'):
+    r_x = str(0) 
+    r_y = str(0.1) 
+    r_z = str(0)
     command_str = 'movel(pose_trans(' + 'get_forward_kin()' + ',' + 'p[' + r_x + ',' + r_y + ',' + r_z + ',' + '0,0,0]' + '),a=' + a + ',v=' + v + ') \n'
     print(command_str)
     command = command_str.encode()
 
     return command
 
-def command_builder_forward_4(point, elev, a='0.05',v='0.15'):
-    r_x = str(0) 
-    r_y = str(0.05) #0.13 to be exact
-    r_z = str(0)
-    elev = str(elev)
+
+def command_builder_qr(x,y, a='0.05',v='0.15'):
+    z_move = ((450-y)*0.025232117)/100
+    x_move = ((468-x)*0.025238305)/100 #473 previously
+    r_x = str(x_move) 
+    r_y = str(0)
+    r_z = str(-z_move)
     command_str = 'movel(pose_trans(' + 'get_forward_kin()' + ',' + 'p[' + r_x + ',' + r_y + ',' + r_z + ',' + '0,0,0]' + '),a=' + a + ',v=' + v + ') \n'
     print(command_str)
     command = command_str.encode()
@@ -223,6 +227,9 @@ class CV_Pipe:
             print('No circles detected')
             return 0
 
+    def detect_qr(self, minRadius=MIN_RADIUS_LASTMILE, maxRadius=MAX_RADIUS_LASTMILE):
+        gray_img = cv2.cvtColor(self.color_image, cv2.COLOR_BGR2GRAY)    
+        gray_img = cv2.GaussianBlur(gray_img, (7, 7), 1.5, 1.5);
 
     def detect_circles_stationary(self, minRadius=MIN_RADIUS_STATIONARY, maxRadius=MAX_RADIUS_STATIONARY):
         gray_img = cv2.cvtColor(self.color_image, cv2.COLOR_BGR2GRAY)    
@@ -573,84 +580,144 @@ if __name__ == '__main__':
                         time.sleep(10)
                         break
 
-#last mile
             pipe = CV_Pipe('040322073606')
             pipe.start()
+
             
             num_circles = 0
-            while num_circles != 1: #NUM_CIRCLES
+            result = []
+            while result ==[]:
                 pipe.update_aligned_frames()
 
                 # Detect circles
-                num_circles = pipe.detect_circles_lastmile()
+                num_circles = pipe.detect_qr() ### changed this
 
                 cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                cv2.imshow('RealSense', pipe.output_image())
-                cv2.waitKey(1)
+                pipe.update_aligned_frames()
 
-            cv2.imshow('RealSense', pipe.output_image())
-            cv2.waitKey(0)
-            check_zero=pipe.update_real_points_lastmile()
+                #Apr Tag 
+                save_image = Image.fromarray(pipe.color_image).save('AprTag.png')
+                Image.open("AprTag.png").save("AprTag.jpg")
+                aprtag_image = cv2.imread("AprTag.jpg")
+                aprtag_image_gray = cv2.cvtColor(aprtag_image, cv2.COLOR_BGR2GRAY)
 
-            while (check_zero==1):
-                pipe = CV_Pipe('040322073606')
-                pipe.start()
-            
-                num_circles = 0
-                while num_circles != 1:
-                    pipe.update_aligned_frames()
+                options = apriltag.DetectorOptions(families="tag36h11")
+                detector = apriltag.Detector(options)
+                result = detector.detect(aprtag_image_gray)
 
-                    # Detect circles
-                    num_circles = pipe.detect_circles_lastmile()
-
-                    cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                    cv2.imshow('RealSense', pipe.output_image())
-                    cv2.waitKey(1)
-                    
-
-                cv2.imshow('RealSense', pipe.output_image())
-                cv2.waitKey(0)
-                check_zero=pipe.update_real_points_lastmile()
-
-            pipe.stop()
-
+            print("result")
+            print(result[0].center[0],result[0].center[1])
+            response = send_command(s,command_builder_qr(result[0].center[0],result[0].center[1]))
+            time.sleep(5)
+            response = send_command(s,command_builder_forward_3())
+            time.sleep(5)
+        
             if j==0:
-                response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+                response = send_command(s,command_builder_back())
                 time.sleep(5)
-                response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
-                time.sleep(5)                
-                response = send_command(s,command_builder_back(pipe.real_points[0]))
-                time.sleep(5)
-                response = send_command(s,command_builder_adjust(pipe.real_points[0],0,0.05))
+                response = send_command(s,command_builder_adjust(0,0.05))
                 time.sleep(5)        
 
-            if j==1:
-                response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+            if j==1:              
+                response = send_command(s,command_builder_back())
                 time.sleep(5)
-                response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
-                time.sleep(5)                
-                response = send_command(s,command_builder_back(pipe.real_points[0]))
-                time.sleep(5)
-                response = send_command(s,command_builder_adjust(pipe.real_points[0],0.1,-0.13))
+                response = send_command(s,command_builder_adjust(0.1,-0.13))
                 time.sleep(5)   
 
             if j==2:         
-                response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+                response = send_command(s,command_builder_back())
                 time.sleep(5)
-                response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
-                time.sleep(5) 
-                response = send_command(s,command_builder_back(pipe.real_points[0]))
-                time.sleep(5)
-                response = send_command(s,command_builder_adjust(pipe.real_points[0],0.1,0.1))
+                response = send_command(s,command_builder_adjust(0.1,0.1))
                 time.sleep(5)
 
-            if j==3:
-                response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+            if j==3:  
+                response = send_command(s,command_builder_back())
                 time.sleep(5)
-                response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
-                time.sleep(5)    
-                response = send_command(s,command_builder_back(pipe.real_points[0]))
-                time.sleep(5)
+
+
+
+        pipe.stop()
+    
+
+
+# #last mile
+#             pipe = CV_Pipe('040322073606')
+#             pipe.start()
+            
+#             num_circles = 0
+#             while num_circles != 1: #NUM_CIRCLES
+#                 pipe.update_aligned_frames()
+
+#                 # Detect circles
+#                 num_circles = pipe.detect_circles_lastmile()
+
+#                 cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+#                 cv2.imshow('RealSense', pipe.output_image())
+#                 cv2.waitKey(1)
+
+#             cv2.imshow('RealSense', pipe.output_image())
+#             cv2.waitKey(0)
+#             check_zero=pipe.update_real_points_lastmile()
+
+#             while (check_zero==1):
+#                 pipe = CV_Pipe('040322073606')
+#                 pipe.start()
+            
+#                 num_circles = 0
+#                 while num_circles != 1:
+#                     pipe.update_aligned_frames()
+
+#                     # Detect circles
+#                     num_circles = pipe.detect_circles_lastmile()
+
+#                     cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+#                     cv2.imshow('RealSense', pipe.output_image())
+#                     cv2.waitKey(1)
+                    
+
+#                 cv2.imshow('RealSense', pipe.output_image())
+#                 cv2.waitKey(0)
+#                 check_zero=pipe.update_real_points_lastmile()
+
+#             pipe.stop()
+
+#             if j==0:
+#                 response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
+#                 time.sleep(5)                
+#                 response = send_command(s,command_builder_back(pipe.real_points[0]))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_adjust(pipe.real_points[0],0,0.05))
+#                 time.sleep(5)        
+
+#             if j==1:
+#                 response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
+#                 time.sleep(5)                
+#                 response = send_command(s,command_builder_back(pipe.real_points[0]))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_adjust(pipe.real_points[0],0.1,-0.13))
+#                 time.sleep(5)   
+
+#             if j==2:         
+#                 response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
+#                 time.sleep(5) 
+#                 response = send_command(s,command_builder_back(pipe.real_points[0]))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_adjust(pipe.real_points[0],0.1,0.1))
+#                 time.sleep(5)
+
+#             if j==3:
+#                 response = send_command(s,command_builder_forward_3(pipe.real_points[0],elev))
+#                 time.sleep(5)
+#                 response = send_command(s,command_builder_forward_4(pipe.real_points[0],elev))
+#                 time.sleep(5)    
+#                 response = send_command(s,command_builder_back(pipe.real_points[0]))
+#                 time.sleep(5)
 
 
         cv2.imshow('RealSense', pipe.output_image())
